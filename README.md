@@ -35,7 +35,7 @@ await login.revoke(credentials);
 ```
 
 - `wait` polls at the interval the provider asks for, adds five seconds on `slow_down`, and resolves with the token set and the profile from userinfo. It rejects with `OAuthTokenError` `access_denied` when the person refuses and `expired_token` when nobody answers in time, and stops when the `signal` passed to it aborts.
-- `refresh` spends the refresh token, and `ensureFresh` does so once the access token is within five minutes of expiry. Better Auth rotates refresh tokens on every use, so store the credentials they resolve with in place of the old ones.
+- `refresh` spends the refresh token, and `ensureFresh` does so once the access token is within five minutes of expiry. Better Auth rotates refresh tokens on every use, so store the credentials they resolve with in place of the old ones. Calls for one refresh token share one request, and a refusal is tried once more a second later, because Better Auth refuses a refresh racing a rotation until it stores the answer it replays.
 - A failure that `isAccessDenied` accepts, a 4xx other than 408, 425 or 429, means the login is over. Anything else is an outage that says nothing about the grant, so keep the credentials and try again later.
 - `revoke` revokes the refresh token at the provider (RFC 7009). Forgetting the credentials is the app's part, as is storing them in the first place.
 - `audience` is sent as `resource` and binds the approval. It defaults to the provider's own API base, and `false` asks for opaque tokens. A provider that refuses the resource is asked once more without it.
@@ -56,11 +56,11 @@ const claims = await verifier.verify(bearer, { scopes: ["api:write"] });
 if (!claims) return new Response(null, { status: 401 });
 ```
 
-A token that fails any check answers `null`. Only a key set that cannot be read, with nothing cached to fall back on, throws a `ProviderError`, because that is the verifier's outage rather than the caller's bad token. Keys are cached for ten minutes and read again when a token names a key id the cache does not hold, at most once every thirty seconds, which is how a key rotation shows up.
+A token that fails any check answers `null`. Only a key set that cannot be read, with nothing cached to fall back on, throws a `ProviderError`, because that is the verifier's outage rather than the caller's bad token. Keys are cached for ten minutes and read again when a token names a key id the cache does not hold, at most once every thirty seconds, which is how a key rotation shows up. A failed read is held for the same thirty seconds, so an outage adds one bounded request per interval instead of one per token. Pass `type: "at+jwt"` to accept only RFC 9068 access tokens, which an id token never is.
 
 ## The token client
 
-The root entry holds what both flows are built on, for a client that runs another grant: `requestToken` posts a grant to the token endpoint (with `client_secret` when the client has one, and the same `resource` fallback), `fetchUserInfo` reads the profile, `tokensFromResponse` turns a token response into a token set, and `providerFetch` is the request every one of them makes, bounded by a timeout of ten seconds unless `timeoutMs` says otherwise. `ProviderError`, `OAuthTokenError` and `isAccessDenied` are the same classes and function every entry exports.
+The root entry holds what both flows are built on, for a client that runs another grant: `requestToken` posts a grant to the token endpoint (with `client_secret` when the client has one, and the same `resource` fallback), `refreshTokens` spends a refresh token with the same one retry after a refusal, `fetchUserInfo` reads the profile, `tokensFromResponse` turns a token response into a token set, and `providerFetch` is the request every one of them makes, bounded by a timeout of ten seconds unless `timeoutMs` says otherwise. `ProviderError`, `OAuthTokenError` and `isAccessDenied` are the same classes and function every entry exports.
 
 ## License
 

@@ -272,10 +272,11 @@ test("ensureFresh spends the refresh token only inside the refresh window", asyn
 
 test("a refused refresh reads as access denied and an outage does not", async () => {
   const { login, responses } = createLogin();
-  responses.push({
+  const refused = {
     status: 400,
     body: { error: "invalid_grant", error_description: "session not found" },
-  });
+  };
+  responses.push(refused, refused);
   responses.push({ status: 503, body: {} });
 
   await assert.rejects(login.refresh(credentials()), (error: unknown) =>
@@ -288,6 +289,49 @@ test("a refused refresh reads as access denied and an outage does not", async ()
   await assert.rejects(
     login.refresh(credentials({ refreshToken: null })),
     (error: unknown) => isAccessDenied(error),
+  );
+});
+
+test("a refresh refused once, as one racing a rotation is, is tried again", async () => {
+  const { login, responses, requests } = createLogin();
+  responses.push({
+    status: 400,
+    body: { error: "invalid_grant", error_description: "rotated" },
+  });
+  responses.push({
+    body: { access_token: "at_1", refresh_token: "rt_1", expires_in: 3600 },
+  });
+  const refreshed = await login.refresh(credentials());
+  assert.equal(refreshed.tokens.refreshToken, "rt_1");
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1]?.body.refresh_token, "rt_0");
+});
+
+test("an outage is not retried", async () => {
+  const { login, responses, requests } = createLogin();
+  responses.push({ status: 503, body: {} });
+  responses.push({ body: { access_token: "at_1", expires_in: 3600 } });
+  await assert.rejects(login.refresh(credentials()), /503/);
+  assert.equal(requests.length, 1);
+});
+
+test("calls for one refresh token share one request, and the next starts anew", async () => {
+  const { login, responses, requests } = createLogin();
+  responses.push({
+    body: { access_token: "at_1", refresh_token: "rt_1", expires_in: 3600 },
+  });
+  const [first, second] = await Promise.all([
+    login.refresh(credentials()),
+    login.refresh(credentials()),
+  ]);
+  assert.equal(first, second);
+  assert.equal(requests.length, 1);
+  responses.push({
+    body: { access_token: "at_2", refresh_token: "rt_2", expires_in: 3600 },
+  });
+  assert.equal(
+    (await login.refresh(first)).tokens.refreshToken,
+    "rt_2",
   );
 });
 

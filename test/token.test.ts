@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ProviderError, requestToken } from "../src/index.ts";
+import {
+  ProviderError,
+  REFRESH_REFUSAL_RETRY_MS,
+  refreshTokens,
+  requestToken,
+} from "../src/index.ts";
 import { createProviderStub } from "./helpers.ts";
 
 test("a token request asks again without the resource when the provider refuses it", async () => {
@@ -54,4 +59,41 @@ test("a token request past its deadline fails without asking", async () => {
     (error: unknown) => error instanceof ProviderError && error.status === 0,
   );
   assert.equal(stub.requests.length, 0);
+});
+
+test("refreshTokens tries once more after a refusal, and only a refusal", async () => {
+  const { fetch, responses, requests } = createProviderStub();
+  const options = {
+    issuer: "https://accounts.test",
+    clientId: "cloud",
+    audience: null,
+    fetch,
+  };
+  const pauses: number[] = [];
+  const sleep = async (ms: number) => {
+    pauses.push(ms);
+  };
+  const refused = {
+    status: 400,
+    body: { error: "invalid_grant", error_description: "rotated" },
+  };
+
+  responses.push(refused, { body: { access_token: "at_1" } });
+  assert.equal(
+    (await refreshTokens(options, "rt_0", sleep)).access_token,
+    "at_1",
+  );
+  assert.deepEqual(pauses, [REFRESH_REFUSAL_RETRY_MS]);
+  assert.equal(requests.length, 2);
+
+  responses.push(refused, refused);
+  await assert.rejects(refreshTokens(options, "rt_0", sleep), /invalid_grant/);
+  assert.equal(requests.length, 4);
+
+  responses.push(
+    { status: 429, body: { error: "slow_down" } },
+    { body: { access_token: "at_2" } },
+  );
+  await assert.rejects(refreshTokens(options, "rt_0", sleep), /slow_down/);
+  assert.equal(requests.length, 5);
 });

@@ -13,8 +13,10 @@ An OAuth client for apps that sign in through a Better Auth OAuth provider, publ
 - Send every request to the provider through `providerFetch`, because a fetch without its timeout is a hang waiting to happen.
 - Keep one copy of the error classes across entries (`test/dist.test.ts`), because `isAccessDenied` reads them with `instanceof`.
 - Read a failure through `isAccessDenied` everywhere: a 4xx other than 408, 425 or 429 ends a login, anything else keeps it, because a client that retries a refusal is a token endpoint storm and a client that drops a login on an outage signs everyone out.
+- Spend a refresh token through `refreshTokens`, the one exception to not retrying a refusal, because Better Auth refuses a refresh racing a rotation until it stores the replay.
 - Keep the device login polling at the interval the provider asks for, adding five seconds on `slow_down`.
 - Make `createTokenVerifier` answer null for a token that fails any check and throw only for a key set it cannot read with nothing cached, because a bad token is the caller's 401 and an unreadable key set is the verifier's outage.
+- Hold a failed read of the key set for `keysRetryMs`, because otherwise a hung provider adds a full timeout to every token verified.
 - Give source imports the `.ts` extension, because the tests run on `node --experimental-strip-types` against `src/`.
 - Add a test in `test/` with every behaviour change.
 - Keep publishing manual and the version on `0.0.x`, and follow a release with a range bump in each consumer, because a caret on `0.0.x` resolves to that single patch.

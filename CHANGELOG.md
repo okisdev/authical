@@ -1,5 +1,20 @@
 # authical
 
+## 0.0.2
+
+### added
+
+- `refreshTokens(options, refreshToken)` spends a refresh token and tries once more a second later after a refusal, because Better Auth marks a token rotated before it stores the answer it replays inside its reuse window, so a refresh racing one in flight is refused until then. a second refusal rejects, and an outage rejects at once.
+- `createTokenVerifier({ type })` refuses a token whose `typ` header says otherwise: `at+jwt` accepts only RFC 9068 access tokens.
+
+### changed
+
+- `refresh` and `ensureFresh` on the device login go through `refreshTokens`, and calls for one refresh token share one request.
+
+### fixed
+
+- a failed read of the key set is held for `keysRetryMs` (thirty seconds) instead of being repeated for every token. once cached keys passed their ten minutes, a hung provider added a full request timeout to each verification. with nothing cached, the failure is thrown again without a request until the interval passes.
+
 ## 0.0.1
 
 ### added

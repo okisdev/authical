@@ -29,8 +29,10 @@ export type TokenVerifierConfig = {
   audience: string | string[];
   /** How long a fetched key set is served before it is read again; ten minutes by default. */
   keysMaxAgeMs?: number;
-  /** How soon after a read for an unknown key id the next such read may happen; thirty seconds by default. */
+  /** How soon after a failed read, or a read for an unknown key id, the next such read may happen; thirty seconds by default. */
   keysRetryMs?: number;
+  /** The `typ` the token's header must carry: `at+jwt` for an RFC 9068 access token, which an id token never is. Any by default. */
+  type?: string;
   /** Tolerance on `exp` and `nbf`; thirty seconds by default. */
   clockSkewMs?: number;
   requestTimeoutMs?: number;
@@ -60,6 +62,10 @@ function fromBase64Url(value: string): Uint8Array<ArrayBuffer> {
     bytes[index] = binary.charCodeAt(index);
   }
   return bytes;
+}
+
+function normalizeType(type: string): string {
+  return type.toLowerCase().replace(/^application\//, "");
 }
 
 function decodeSegment(segment: string): Record<string, unknown> | null {
@@ -123,7 +129,9 @@ async function importKeys(jwks: unknown): Promise<Map<string, CryptoKey>> {
  * read at all, with nothing cached to fall back on, throws, because that is
  * the verifier's outage rather than the caller's bad token. Keys are cached
  * and re-read once when a token names a key id the cache does not hold,
- * which is how a rotation shows up.
+ * which is how a rotation shows up. A failed read is not repeated for
+ * `keysRetryMs`, so an outage costs one bounded request per interval rather
+ * than one per token.
  */
 export function createTokenVerifier(config: TokenVerifierConfig) {
   const now = config.now ?? Date.now;
@@ -134,6 +142,7 @@ export function createTokenVerifier(config: TokenVerifierConfig) {
   const keysMaxAgeMs = config.keysMaxAgeMs ?? DEFAULT_KEYS_MAX_AGE_MS;
   const keysRetryMs = config.keysRetryMs ?? DEFAULT_KEYS_RETRY_MS;
   const clockSkewMs = config.clockSkewMs ?? DEFAULT_CLOCK_SKEW_MS;
+  const expectedType = config.type && normalizeType(config.type);
   const fetchOptions: ProviderFetchOptions = {
     issuer: config.issuer,
     fetch: config.fetch,
@@ -172,10 +181,17 @@ export function createTokenVerifier(config: TokenVerifierConfig) {
     return loading;
   }
 
+  let failure: { error: unknown; at: number } | null = null;
+
   async function reload(): Promise<KeySet> {
+    if (failure && now() - failure.at < keysRetryMs) {
+      if (cached) return cached;
+      throw failure.error;
+    }
     try {
       return await load();
     } catch (error) {
+      failure = { error, at: now() };
       if (cached) return cached;
       throw error;
     }
@@ -211,6 +227,13 @@ export function createTokenVerifier(config: TokenVerifierConfig) {
       const header = decodeSegment(segments[0]!);
       const payload = decodeSegment(segments[1]!);
       if (!header || !payload || header.alg !== "EdDSA") return null;
+      if (
+        expectedType &&
+        (typeof header.typ !== "string" ||
+          normalizeType(header.typ) !== expectedType)
+      ) {
+        return null;
+      }
       let signature: Uint8Array<ArrayBuffer>;
       try {
         signature = fromBase64Url(segments[2]!);

@@ -204,13 +204,79 @@ test("a key set that cannot be read throws unless a cached one exists", async ()
       error instanceof ProviderError && error.status === 503,
   );
 
+  harness.setNow(TEST_NOW + 30_000);
   harness.responses.push({ body: { keys: [key.jwk] } });
   assert.equal((await verifier.verify(token))?.sub, "user_1");
 
-  harness.setNow(TEST_NOW + 2000);
+  harness.setNow(TEST_NOW + 32_000);
   harness.responses.push({ status: 503, body: {} });
   assert.equal((await verifier.verify(token))?.sub, "user_1");
   assert.equal(harness.requests.length, 3);
+});
+
+test("a failed read of the key set is not repeated until keysRetryMs has passed", async () => {
+  const harness = createProviderStub();
+  const key = await keyPair("k1");
+  const verifier = createTokenVerifier({
+    issuer: "https://accounts.test",
+    audience: AUDIENCE,
+    keysMaxAgeMs: 1000,
+    fetch: harness.fetch,
+    now: harness.now,
+  });
+  const token = await sign(
+    key.privateKey,
+    { alg: "EdDSA", kid: "k1" },
+    claims(),
+  );
+
+  harness.responses.push({ status: 503, body: {} });
+  const refused = (error: unknown) =>
+    error instanceof ProviderError && error.status === 503;
+  await assert.rejects(verifier.verify(token), refused);
+  await assert.rejects(verifier.verify(token), refused);
+  assert.equal(harness.requests.length, 1, "nothing cached, one read");
+
+  harness.setNow(TEST_NOW + 30_000);
+  harness.responses.push({ body: { keys: [key.jwk] } });
+  assert.equal((await verifier.verify(token))?.sub, "user_1");
+
+  harness.setNow(TEST_NOW + 32_000);
+  harness.responses.push({ status: 503, body: {} });
+  for (let index = 0; index < 3; index++) {
+    assert.equal((await verifier.verify(token))?.sub, "user_1");
+  }
+  assert.equal(harness.requests.length, 3, "cached keys expired, one read");
+
+  harness.setNow(TEST_NOW + 62_000);
+  harness.responses.push({ body: { keys: [key.jwk] } });
+  assert.equal((await verifier.verify(token))?.sub, "user_1");
+  assert.equal(harness.requests.length, 4, "the outage over, read again");
+});
+
+test("type refuses a token whose header says otherwise", async () => {
+  const harness = createProviderStub();
+  const key = await keyPair("k1");
+  const verifier = createTokenVerifier({
+    issuer: "https://accounts.test",
+    audience: AUDIENCE,
+    type: "at+jwt",
+    fetch: harness.fetch,
+    now: harness.now,
+  });
+  harness.responses.push({ body: { keys: [key.jwk] } });
+  const signed = (typ?: unknown) =>
+    sign(
+      key.privateKey,
+      { alg: "EdDSA", kid: "k1", ...(typ === undefined ? {} : { typ }) },
+      claims(),
+    );
+  assert.ok(await verifier.verify(await signed("at+jwt")));
+  assert.ok(await verifier.verify(await signed("AT+JWT")));
+  assert.ok(await verifier.verify(await signed("application/at+jwt")));
+  assert.equal(await verifier.verify(await signed("JWT")), null);
+  assert.equal(await verifier.verify(await signed()), null);
+  assert.equal(await verifier.verify(await signed(1)), null);
 });
 
 test("an endpoint's scopes are checked against the token's scope claim", async () => {
@@ -262,6 +328,7 @@ test("a key set that answers 200 without keys is a read failure, and a bad entry
       /key set/.test(error.message),
   );
 
+  harness.setNow(TEST_NOW + 30_000);
   harness.responses.push({
     body: {
       keys: [
