@@ -1,4 +1,4 @@
-import { OAuthTokenError, ProviderError } from "./errors.ts";
+import { isAccessDenied, OAuthTokenError, ProviderError } from "./errors.ts";
 import { providerFetch, type ProviderFetchOptions } from "./provider.ts";
 import type { TokenResponse, TokenSet, User } from "./types.ts";
 
@@ -75,6 +75,38 @@ async function postToken(
     throw error;
   }
   return (await response.json()) as TokenResponse;
+}
+
+/**
+ * How long a refused refresh waits before its one retry. Better Auth marks a
+ * refresh token rotated before it stores the answer it replays inside its
+ * reuse window, so a refresh racing one in flight is refused until then.
+ */
+export const REFRESH_REFUSAL_RETRY_MS = 1000;
+
+/**
+ * Spends a refresh token, trying once more after a refusal (see
+ * `REFRESH_REFUSAL_RETRY_MS`). A second refusal rejects, and is the end of
+ * the login; an outage rejects at once, with no retry.
+ */
+export async function refreshTokens(
+  options: TokenClientOptions,
+  refreshToken: string,
+  sleep: (ms: number) => Promise<void> = (ms) =>
+    new Promise((done) => setTimeout(done, ms)),
+): Promise<TokenResponse> {
+  const grant = () =>
+    requestToken(options, {
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+    });
+  try {
+    return await grant();
+  } catch (error) {
+    if (!isAccessDenied(error)) throw error;
+  }
+  await sleep(REFRESH_REFUSAL_RETRY_MS);
+  return grant();
 }
 
 export async function fetchUserInfo(

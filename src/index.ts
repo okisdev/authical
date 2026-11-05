@@ -7,6 +7,8 @@ export {
 } from "./provider.ts";
 export {
   fetchUserInfo,
+  REFRESH_REFUSAL_RETRY_MS,
+  refreshTokens,
   requestToken,
   tokensFromResponse,
   type TokenClientOptions,

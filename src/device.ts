@@ -6,6 +6,7 @@ import {
 } from "./provider.ts";
 import {
   fetchUserInfo,
+  refreshTokens,
   refusesResource,
   requestToken,
   tokenErrorFrom,
@@ -106,6 +107,7 @@ export function createDeviceLogin(config: DeviceLoginConfig) {
     clientId: config.clientId,
     audience: resource,
   });
+  const refreshing = new Map<string, Promise<DeviceCredentials>>();
 
   async function requestCode(
     resource: string | null,
@@ -210,9 +212,11 @@ export function createDeviceLogin(config: DeviceLoginConfig) {
     /**
      * Spends the refresh token for a new token set. A provider that rotates
      * refresh tokens, as Better Auth does, hands back a new one on every use,
-     * so the credentials this resolves with replace the ones passed in. A
-     * rejection that `isAccessDenied` accepts means the login is over;
-     * anything else says nothing about it.
+     * so the credentials this resolves with replace the ones passed in. Calls
+     * for one refresh token share one request, and a refusal is tried once
+     * more (`refreshTokens`), because another process may be rotating the same
+     * token. A rejection that `isAccessDenied` accepts means the login is
+     * over; anything else says nothing about it.
      */
     async refresh(credentials: DeviceCredentials): Promise<DeviceCredentials> {
       const { refreshToken } = credentials.tokens;
@@ -223,11 +227,16 @@ export function createDeviceLogin(config: DeviceLoginConfig) {
           "The credentials carry no refresh token",
         );
       }
-      const response = await requestToken(tokenOptions(audience), {
-        grant_type: "refresh_token",
-        refresh_token: refreshToken,
-      });
-      return credentialsFrom(response, credentials);
+      let pending = refreshing.get(refreshToken);
+      if (!pending) {
+        pending = refreshTokens(tokenOptions(audience), refreshToken, (ms) =>
+          sleep(ms),
+        )
+          .then((response) => credentialsFrom(response, credentials))
+          .finally(() => refreshing.delete(refreshToken));
+        refreshing.set(refreshToken, pending);
+      }
+      return pending;
     },
 
     /** The credentials as they are while the access token has time left, refreshed otherwise. */
