@@ -1,6 +1,6 @@
 {
   "name": "authical",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "OAuth client for apps that sign in through a Better Auth OAuth provider: the device grant for desktop apps and CLIs, and access token verification for resource servers",
   "license": "MIT",
   "repository": {

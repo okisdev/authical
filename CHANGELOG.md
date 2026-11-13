@@ -1,5 +1,11 @@
 # authical
 
+## 0.0.3
+
+### added
+
+- `createDeviceLogin({ deviceName })` sends what the person calls this device as `device_name` with the device code request, trimmed and left out when blank, for a provider that lists logins by name.
+
 ## 0.0.2
 
 ### added
