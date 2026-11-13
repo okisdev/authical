@@ -35,6 +35,12 @@ export type DeviceLoginConfig = {
    * approval binds it, and again when the code is redeemed.
    */
   audience?: string | false;
+  /**
+   * What the person calls this device, sent as `device_name` with the device
+   * code request for a provider that lists logins by name; one that does not
+   * know the parameter ignores it.
+   */
+  deviceName?: string;
   /** How close to expiry `ensureFresh` refreshes; five minutes by default. */
   refreshBeforeExpiryMs?: number;
   requestTimeoutMs?: number;
@@ -95,6 +101,7 @@ export function createDeviceLogin(config: DeviceLoginConfig) {
     config.audience === undefined
       ? apiBase(config.issuer)
       : config.audience || null;
+  const deviceName = config.deviceName?.trim();
   const refreshBeforeExpiryMs =
     config.refreshBeforeExpiryMs ?? DEFAULT_REFRESH_BEFORE_EXPIRY_MS;
   const fetchOptions: ProviderFetchOptions = {
@@ -114,6 +121,7 @@ export function createDeviceLogin(config: DeviceLoginConfig) {
   ): Promise<DeviceAuthorization> {
     const body = new URLSearchParams({ client_id: config.clientId, scope });
     if (resource) body.set("resource", resource);
+    if (deviceName) body.set("device_name", deviceName);
     const response = await providerFetch(
       fetchOptions,
       "/api/auth/device/code",

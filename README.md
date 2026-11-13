@@ -39,6 +39,7 @@ await login.revoke(credentials);
 - A failure that `isAccessDenied` accepts, a 4xx other than 408, 425 or 429, means the login is over. Anything else is an outage that says nothing about the grant, so keep the credentials and try again later.
 - `revoke` revokes the refresh token at the provider (RFC 7009). Forgetting the credentials is the app's part, as is storing them in the first place.
 - `audience` is sent as `resource` and binds the approval. It defaults to the provider's own API base, and `false` asks for opaque tokens. A provider that refuses the resource is asked once more without it.
+- `deviceName` is what the person calls this device. It is sent as `device_name` with the device code request, for a provider that lists logins by name, and a provider that does not know the parameter ignores it.
 
 ## Verifying access tokens
 

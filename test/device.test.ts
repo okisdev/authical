@@ -36,6 +36,7 @@ const USERINFO = {
 function createLogin(
   overrides: {
     sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+    deviceName?: string;
   } = {},
 ) {
   const harness = createProviderStub();
@@ -43,6 +44,7 @@ function createLogin(
   const login = createDeviceLogin({
     issuer: "https://accounts.test",
     clientId: "test-client",
+    deviceName: overrides.deviceName,
     fetch: harness.fetch,
     now: harness.now,
     sleep:
@@ -105,6 +107,28 @@ test("start asks for a device code with the client, the scope and the resource",
     intervalMs: 5000,
     resource: "https://accounts.test/api/auth",
   });
+});
+
+test("start sends the device name trimmed, on the retry without the resource too, and leaves out a blank one", async () => {
+  const named = createLogin({ deviceName: "  Work laptop " });
+  named.responses.push({
+    status: 400,
+    body: { error: "invalid_target", error_description: "unknown resource" },
+  });
+  named.responses.push({ body: CODE_RESPONSE });
+
+  await named.login.start();
+
+  assert.equal(named.requests[0]?.body.device_name, "Work laptop");
+  assert.equal(named.requests[1]?.body.device_name, "Work laptop");
+  assert.equal("resource" in named.requests[1]!.body, false);
+
+  const blank = createLogin({ deviceName: "   " });
+  blank.responses.push({ body: CODE_RESPONSE });
+
+  await blank.login.start();
+
+  assert.equal("device_name" in blank.requests[0]!.body, false);
 });
 
 test("start asks again without the resource when the provider refuses it", async () => {
