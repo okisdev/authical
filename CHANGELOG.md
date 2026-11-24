@@ -1,5 +1,11 @@
 # authical
 
+## 0.0.4
+
+### fixed
+
+- `createTokenVerifier` no longer shares an in-flight read of the key set between verifications. on Cloudflare Workers the read belongs to the request that started it, and a cancelled request leaves it unsettled, so every later verification in the isolate waited on it until the isolate was recycled. each verification that needs the key set now reads it itself; the keys it brings back are still cached for every verification, and a failed read is still held for `keysRetryMs`.
+
 ## 0.0.3
 
 ### added

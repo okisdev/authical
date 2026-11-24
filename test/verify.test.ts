@@ -85,6 +85,42 @@ test("a token the provider signed verifies against its key set, fetched once", a
   assert.equal(requests[0]?.url, "https://accounts.test/api/auth/jwks");
 });
 
+test("a key set read that never settles does not hold up the next verify", async () => {
+  const harness = createProviderStub();
+  const key = await keyPair("k1");
+  let reads = 0;
+  // On Cloudflare Workers, the I/O of a request that is cancelled never
+  // settles: the first read stands for that request, left behind.
+  const fetch: typeof globalThis.fetch = (input, init) =>
+    ++reads === 1 ? new Promise<Response>(() => {}) : harness.fetch(input, init);
+  const verifier = createTokenVerifier({
+    issuer: "https://accounts.test",
+    audience: AUDIENCE,
+    fetch,
+    now: harness.now,
+  });
+  const token = await sign(
+    key.privateKey,
+    { alg: "EdDSA", kid: "k1" },
+    claims(),
+  );
+
+  void verifier.verify(token);
+  harness.responses.push({ body: { keys: [key.jwk] } });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const second = await Promise.race([
+    verifier.verify(token),
+    new Promise<"hung">((resolve) => {
+      timer = setTimeout(() => resolve("hung"), 1000);
+    }),
+  ]);
+  clearTimeout(timer);
+
+  assert.notEqual(second, "hung", "the second verify waited on the first read");
+  assert.equal(second?.sub, "user_1");
+  assert.equal(reads, 2);
+});
+
 test("a key id the cache does not hold reads the key set again", async () => {
   const { key, verifier, requests, responses } = await setup();
   const rotated = await keyPair("k2");

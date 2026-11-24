@@ -149,36 +149,35 @@ export function createTokenVerifier(config: TokenVerifierConfig) {
     timeoutMs: config.requestTimeoutMs,
   };
   let cached: KeySet | null = null;
-  let loading: Promise<KeySet> | null = null;
 
-  function load(): Promise<KeySet> {
-    loading ??= (async () => {
-      try {
-        const response = await providerFetch(fetchOptions, "/api/auth/jwks");
-        if (!response.ok) {
-          throw new ProviderError(
-            `Failed to load the key set: ${response.status}`,
-            response.status,
-          );
-        }
-        let keys: Map<string, CryptoKey>;
-        try {
-          keys = await importKeys(await response.json());
-        } catch (error) {
-          throw new ProviderError(
-            `Failed to read the key set: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-            response.status,
-          );
-        }
-        cached = { keys, loadedAt: now() };
-        return cached;
-      } finally {
-        loading = null;
-      }
-    })();
-    return loading;
+  /**
+   * Reads the key set for this call alone. An in-flight read is never shared
+   * between verifications: on Cloudflare Workers the read belongs to the
+   * request that started it, and if that request is cancelled the read never
+   * settles, so every verification waiting on it would wait forever. What a
+   * read brings back is shared through `cached`.
+   */
+  async function load(): Promise<KeySet> {
+    const response = await providerFetch(fetchOptions, "/api/auth/jwks");
+    if (!response.ok) {
+      throw new ProviderError(
+        `Failed to load the key set: ${response.status}`,
+        response.status,
+      );
+    }
+    let keys: Map<string, CryptoKey>;
+    try {
+      keys = await importKeys(await response.json());
+    } catch (error) {
+      throw new ProviderError(
+        `Failed to read the key set: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        response.status,
+      );
+    }
+    cached = { keys, loadedAt: now() };
+    return cached;
   }
 
   let failure: { error: unknown; at: number } | null = null;
